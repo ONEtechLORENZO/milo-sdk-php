@@ -155,6 +155,65 @@ $apiKey = $client->get('bearer_token'); // milo_sk_… shown once — store it
 $apiKey = $milo->apiClients('acme')->rotateBearer('web_app')->get('bearer_token');
 ```
 
+## Onboarding a tenant (on account signup)
+
+When your app creates a new account, provision the matching Milo tenant +
+credentials in the same flow. Authenticate with a **`provisioner`** admin token —
+least privilege: it can onboard tenants and mint/rotate api-client keys and
+*nothing else* (a tenant-scoped one mints only for its own tenant). Don't ship an
+`owner` token to the app.
+
+```php
+use Milo\Sdk\Milo;
+use Milo\Sdk\Exception\ConflictException;
+
+$milo = Milo::client(
+    baseUrl: getenv('MILO_BASE_URL'),
+    adminToken: getenv('MILO_PROVISIONER_TOKEN'),   // a provisioner-role token
+);
+
+/** Provision a Milo tenant for a new account; returns the bearer key to store. */
+function onboardMiloTenant(\Milo\Sdk\Client $milo, string $accountId, string $brand): string
+{
+    // Retry-safe: a re-run of signup must not fail on an already-created tenant.
+    try {
+        $milo->tenants()->create([
+            'tenant_id'        => $accountId,
+            'display_name'     => $brand,
+            'status'           => 'active',
+            'prompt_variables' => ['brand' => $brand],
+        ]);
+    } catch (ConflictException) {
+        // Already exists (signup retried) — carry on.
+    }
+
+    // A starter agent (task), published as v1. Skip/vary if you add agents later.
+    $milo->tasks($accountId)->builder('support')
+        ->displayName('Support agent')
+        ->inlinePrompt('You are {{brand}} support. Be concise.')
+        ->model('eu.amazon.nova-micro-v1:0')
+        ->history(true, 20)
+        ->enable()
+        ->publish();
+
+    // Ingress credential — the bearer key is returned ONCE.
+    $client = $milo->apiClients($accountId)->create([
+        'client_id'        => 'web_app',
+        'allowed_task_ids' => ['support'],
+    ]);
+
+    return $client->get('bearer_token');   // milo_sk_… — store encrypted on the account
+}
+```
+
+Store the returned key on your account record (encrypted); your app uses it later
+to drive the agent: `$milo->messaging($accountId, 'web_app', apiKey: $key)`.
+
+- **The bearer key is shown once** (hashed at rest). Lost ⇒ `rotateBearer()` mints
+  a new one and invalidates the old. Never log it.
+- **Guard every step for retries** (catch `ConflictException`, or `->get()` first)
+  so a partial-then-retried onboard converges instead of erroring.
+
 ## Drive the agent (data plane)
 
 ```php
