@@ -54,6 +54,38 @@ factory's `withHttpClient(...)`.
 > `ONEtechLORENZO/milo-poc` (`sdk/php/`). Edit the SDK there, not here — direct
 > commits to `milo-sdk-php` are overwritten on the next split. See `CLAUDE.md`.
 
+## Integrate it with Claude Code
+
+Paste this into a Claude Code session **in your project** to wire the SDK in.
+Fill the `<…>` placeholders first:
+
+```text
+Integrate the Milo PHP SDK (composer package `milo/sdk`) into this project.
+
+It is an INTERNAL package — NOT on Packagist. Install it from its git repo:
+1. Add to composer.json a "vcs" repository
+   "https://github.com/ONEtechLORENZO/milo-sdk-php.git" and require
+   "milo/sdk": "^0.1", then run `composer update milo/sdk`. Do NOT look for it on
+   Packagist. If Composer can't access the repo, stop and tell me — it needs
+   read access (a read-only GitHub token in auth.json, or a deploy key + the
+   git@github.com:ONEtechLORENZO/milo-sdk-php.git SSH URL).
+2. Before writing any code, read vendor/milo/sdk/README.md and
+   vendor/milo/sdk/CLAUDE.md for the real API. Use ONLY methods/config keys
+   documented there — do not invent endpoints or response shapes.
+3. Add a small factory/service that builds the client from env vars:
+   MILO_BASE_URL (the API Gateway invoke URL incl. the stage segment),
+   MILO_API_KEY (a milo_sk_… bearer key for the data plane), and — only if I
+   need the control plane — MILO_ADMIN_TOKEN. Add them to .env.example; never
+   commit real values.
+4. Add one smoke test that sends a message and polls for the reply, using
+   tenant "<TENANT_ID>", api-client "<CLIENT_ID>", and default task "<TASK_ID>".
+
+If this is a Laravel app, prefer the auto-discovered `Milo` facade + the
+published package config over a hand-rolled factory (see the README's Laravel
+section). The SDK targets one base URL for both planes; auth is a single header
+(no request signing).
+```
+
 ## Quick start
 
 ```php
