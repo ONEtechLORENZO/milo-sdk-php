@@ -16,16 +16,43 @@ are a single header — no request signing.
 > (`enable_api_gateway=true`), which exposes `/v1/*` (messaging) **and**
 > `/admin/*` (config) on the same host. See `infra/` and the repo `docs/API.md`.
 
-## Install
+## Installing this SDK
+
+This is an **internal package** — it is not published on Packagist. It is
+distributed from its own git repo (`ONEtechLORENZO/milo-sdk-php`), so add that as
+a Composer `vcs` repository in the consuming project's `composer.json`:
+
+```jsonc
+{
+  "repositories": [
+    { "type": "vcs", "url": "https://github.com/ONEtechLORENZO/milo-sdk-php.git" }
+  ],
+  "require": {
+    "milo/sdk": "^0.1"
+  }
+}
+```
 
 ```bash
-composer require milo/sdk
+composer update milo/sdk
 ```
+
+- **Versioning:** `^0.1` tracks `0.1.x` releases (tags on `milo-sdk-php`). Use
+  `"dev-main"` to follow the latest unreleased `main` instead of a pinned tag.
+- **Private-repo access:** Composer needs read access to `milo-sdk-php`. Either
+  give it a read-only GitHub token —
+  `composer config --global --auth github-oauth.github.com <token>` (or an
+  `auth.json`) — or use a **deploy key** with the SSH URL
+  `git@github.com:ONEtechLORENZO/milo-sdk-php.git`.
 
 Requires PHP 8.1+. No hard HTTP-client dependency — the SDK uses PSR-18/PSR-17
 auto-discovery (`php-http/discovery`), preferring Guzzle when installed and
 otherwise any PSR-18 client in your project; you can also inject one via the
 factory's `withHttpClient(...)`.
+
+> **Maintainers:** this repo is **generated** by a subtree split from
+> `ONEtechLORENZO/milo-poc` (`sdk/php/`). Edit the SDK there, not here — direct
+> commits to `milo-sdk-php` are overwritten on the next split. See `CLAUDE.md`.
 
 ## Quick start
 
