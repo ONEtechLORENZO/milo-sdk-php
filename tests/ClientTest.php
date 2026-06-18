@@ -1,0 +1,242 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Milo\Sdk\Tests;
+
+use Milo\Sdk\Client;
+use Milo\Sdk\Exception\ConflictException;
+use Milo\Sdk\Exception\MiloException;
+use Milo\Sdk\Exception\NotFoundException;
+use Milo\Sdk\Factory;
+use Milo\Sdk\Responses\ExportResult;
+use Milo\Sdk\Responses\SendResult;
+use Milo\Sdk\Tests\Support\RecordingClient;
+use PHPUnit\Framework\TestCase;
+
+final class ClientTest extends TestCase
+{
+    private function client(RecordingClient $rec): Client
+    {
+        return (new Factory())
+            ->withBaseUrl('https://api.test/prod')
+            ->withAdminToken('admin-token', 'sdk-tester')
+            ->withApiClient('web_app', 'milo_sk_K3yId-s3cret')
+            ->withHttpClient($rec)
+            ->make();
+    }
+
+    public function testTenantCreateHitsAdminPathWithTokenHeaders(): void
+    {
+        $rec = (new RecordingClient())->queueJson(201, ['tenant' => ['tenant_id' => 'acme', 'config_version' => 1]]);
+        $tenant = $this->client($rec)->tenants()->create(['tenant_id' => 'acme', 'prompt_variables' => ['brand' => 'Acme']]);
+
+        $req = $rec->lastRequest();
+        self::assertSame('POST', $req->getMethod());
+        self::assertSame('https://api.test/prod/admin/tenants', (string) $req->getUri());
+        self::assertSame('admin-token', $req->getHeaderLine('X-Admin-Token'));
+        self::assertSame('sdk-tester', $req->getHeaderLine('X-Admin-Actor'));
+        self::assertSame('Acme', $rec->lastJsonBody()['prompt_variables']['brand']);
+        self::assertSame('acme', $tenant->id());
+        self::assertSame(1, $tenant->configVersion());
+    }
+
+    public function testSetVariablesCarriesExpectedConfigVersion(): void
+    {
+        $rec = (new RecordingClient())->queueJson(200, ['tenant' => ['tenant_id' => 'acme', 'config_version' => 3]]);
+        $this->client($rec)->tenants()->setVariables('acme', ['brand' => 'Acme2'], expectedConfigVersion: 2);
+
+        $body = $rec->lastJsonBody();
+        self::assertSame(2, $body['expected_config_version']);
+        self::assertSame('Acme2', $body['prompt_variables']['brand']);
+        self::assertSame('PUT', $rec->lastRequest()->getMethod());
+    }
+
+    public function testMessagingSendIsBearerAuthedAndTyped(): void
+    {
+        $rec = (new RecordingClient())->queueJson(202, [
+            'status' => 'accepted',
+            'conversation_id' => 'conv_1',
+            'external_message_id' => 'ext_1',
+            'result_status' => 'pending',
+        ]);
+
+        $result = $this->client($rec)->messaging('acme', 'web_app')->send('Where is my order?', [
+            'task_id' => 'support',
+            'external_sender_id' => 'user-42',
+        ]);
+
+        $req = $rec->lastRequest();
+        self::assertSame('https://api.test/prod/v1/messages', (string) $req->getUri());
+        self::assertSame('Bearer milo_sk_K3yId-s3cret', $req->getHeaderLine('Authorization'));
+        // No legacy signing headers.
+        self::assertSame('', $req->getHeaderLine('X-Milo-Signature'));
+
+        $body = $rec->lastJsonBody();
+        self::assertSame('acme', $body['tenant_id']);
+        self::assertSame('support', $body['task_id']);
+        self::assertSame('user-42', $body['external_sender']['id']);
+        self::assertSame('Where is my order?', $body['message']['text']);
+        self::assertNotEmpty($body['external_message_id']);
+
+        self::assertInstanceOf(SendResult::class, $result);
+        self::assertFalse($result->isDuplicate());
+        self::assertSame('conv_1', $result->conversationId);
+    }
+
+    public function testSendPollRetrievesCompletedResult(): void
+    {
+        $rec = (new RecordingClient())
+            ->queueJson(202, ['status' => 'accepted', 'external_message_id' => 'ext_9'])
+            ->queueJson(200, ['status' => 'pending', 'external_message_id' => 'ext_9'])
+            ->queueJson(200, [
+                'status' => 'completed',
+                'external_message_id' => 'ext_9',
+                'reply' => ['type' => 'text', 'text' => 'Your order ships today.'],
+                'debug' => ['usage' => ['totalTokens' => 42]],
+            ]);
+
+        $result = $this->client($rec)->messaging('acme', 'web_app')
+            ->send('status?', ['task_id' => 'support', 'external_sender_id' => 'u1'])
+            ->poll(maxAttempts: 3, intervalSeconds: 0.0);
+
+        self::assertTrue($result->isCompleted());
+        self::assertSame('Your order ships today.', $result->text());
+        self::assertSame(42, $result->usage()['totalTokens']);
+        // GET reads carry the bearer key; the tenant comes from the key itself.
+        self::assertSame('Bearer milo_sk_K3yId-s3cret', $rec->lastRequest()->getHeaderLine('Authorization'));
+    }
+
+    public function testFailedSendSurfacesGeneratedExternalMessageId(): void
+    {
+        $rec = (new RecordingClient())->queueJson(503, ['status' => 'error', 'message' => 'upstream down']);
+
+        try {
+            $this->client($rec)->messaging('acme', 'web_app')
+                ->send('hi', ['task_id' => 'support', 'external_sender_id' => 'u1']);
+            self::fail('expected MiloException');
+        } catch (MiloException $e) {
+            $sentId = $rec->lastJsonBody()['external_message_id'];
+            self::assertNotEmpty($sentId);
+            self::assertSame($sentId, $e->externalMessageId, 'caller can retry the same id');
+        }
+    }
+
+    public function testCloseHitsDeployedRouteWithConversationIdInBody(): void
+    {
+        $rec = (new RecordingClient())->queueJson(200, ['status' => 'closed', 'conversation_id' => 'conv_1']);
+
+        $this->client($rec)->messaging('acme', 'web_app')->close('conv_1', reason: 'resolved', taskId: 'support');
+
+        $req = $rec->lastRequest();
+        // Deployed route: POST /v1/conversations/close (id in body, NOT the path).
+        self::assertSame('https://api.test/prod/v1/conversations/close', (string) $req->getUri());
+        self::assertSame('POST', $req->getMethod());
+
+        $body = $rec->lastJsonBody();
+        self::assertSame('conv_1', $body['conversation_id']);
+        self::assertSame('acme', $body['tenant_id']);
+        self::assertSame('resolved', $body['close_reason']);
+
+        // Bearer-authed, no signing headers.
+        self::assertSame('Bearer milo_sk_K3yId-s3cret', $req->getHeaderLine('Authorization'));
+    }
+
+    public function testExportRetrievalSendsQueryParamsAndReturnsReadyPackage(): void
+    {
+        $rec = (new RecordingClient())->queueJson(200, [
+            'status' => 'ready',
+            'export' => ['conversation_id' => 'conv_1', 'message_count' => 2, 'transcript_sha256' => 'abc'],
+        ]);
+
+        $export = $this->client($rec)->messaging('acme', 'web_app')->export('conv_1', taskId: 'support');
+
+        $req = $rec->lastRequest();
+        self::assertSame('GET', $req->getMethod());
+        self::assertStringStartsWith('https://api.test/prod/v1/conversations/export?', (string) $req->getUri());
+        parse_str($req->getUri()->getQuery(), $q);
+        self::assertSame('acme', $q['tenant_id']);
+        self::assertSame('support', $q['task_id']);
+        self::assertSame('conv_1', $q['conversation_id']);
+        self::assertSame('Bearer milo_sk_K3yId-s3cret', $req->getHeaderLine('Authorization'));
+
+        self::assertInstanceOf(ExportResult::class, $export);
+        self::assertTrue($export->isReady());
+        self::assertSame(2, $export->package()['message_count']);
+    }
+
+    public function testExportMapsNotBuilt404ToNotReadyStatus(): void
+    {
+        $rec = (new RecordingClient())->queueJson(404, ['status' => 'not_ready', 'reason' => 'export_not_built']);
+
+        $export = $this->client($rec)->messaging('acme', 'web_app')->export('conv_1', taskId: 'support');
+
+        // 404 is surfaced as a poll status, not an exception.
+        self::assertTrue($export->notReady());
+        self::assertFalse($export->isReady());
+        self::assertNull($export->package());
+    }
+
+    public function testExportMapsPurged410ToPurgedStatus(): void
+    {
+        $rec = (new RecordingClient())->queueJson(410, [
+            'status' => 'purged',
+            'reason' => 'conversation_exported_and_deleted',
+            'purged_at' => '2026-06-17T02:00:00Z',
+        ]);
+
+        $export = $this->client($rec)->messaging('acme', 'web_app')->export('conv_1', taskId: 'support');
+
+        self::assertTrue($export->isPurged());
+        self::assertSame('2026-06-17T02:00:00Z', $export->purgedAt());
+        self::assertNull($export->package());
+    }
+
+    public function testAcknowledgeExportPostsActionDiscriminator(): void
+    {
+        $rec = (new RecordingClient())->queueJson(202, ['status' => 'ok', 'export_ack' => 'recorded']);
+
+        $this->client($rec)->messaging('acme', 'web_app')->acknowledgeExport('conv_1', taskId: 'support');
+
+        $req = $rec->lastRequest();
+        self::assertSame('POST', $req->getMethod());
+        self::assertSame('https://api.test/prod/v1/conversations/export/ack', (string) $req->getUri());
+        $body = $rec->lastJsonBody();
+        self::assertSame('ack_export', $body['action']);
+        self::assertSame('acme', $body['tenant_id']);
+        self::assertSame('support', $body['task_id']);
+        self::assertSame('conv_1', $body['conversation_id']);
+        self::assertSame('Bearer milo_sk_K3yId-s3cret', $req->getHeaderLine('Authorization'));
+    }
+
+    public function testConflictExceptionExposesCurrentConfigVersion(): void
+    {
+        $rec = (new RecordingClient())->queueJson(409, [
+            'error' => 'config_version_conflict',
+            'code' => 'config_version_conflict',
+            'current_config_version' => 7,
+        ]);
+
+        try {
+            $this->client($rec)->tasks('acme')->update('support', ['display_name' => 'x'], expectedConfigVersion: 5);
+            self::fail('expected ConflictException');
+        } catch (ConflictException $e) {
+            self::assertSame(409, $e->status);
+            self::assertSame(7, $e->currentConfigVersion());
+        }
+    }
+
+    public function testNotFoundMapsToTypedException(): void
+    {
+        $rec = (new RecordingClient())->queueJson(404, ['error' => 'not found']);
+        $this->expectException(NotFoundException::class);
+        $this->client($rec)->tenants()->get('missing');
+    }
+
+    public function testMessagingWithoutSecretThrows(): void
+    {
+        $rec = new RecordingClient();
+        $this->expectException(\InvalidArgumentException::class);
+        $this->client($rec)->messaging('acme', 'unregistered_client');
+    }
+}

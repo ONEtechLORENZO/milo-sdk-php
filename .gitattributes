@@ -1,0 +1,7 @@
+# Keep the installed package lean: Composer's dist archive drops these. Source
+# stays in the repo (and the monorepo CI still runs the tests) — they just don't
+# ship to consumers' vendor/.
+/tests export-ignore
+/phpunit.xml export-ignore
+/.phpunit.cache export-ignore
+/.gitattributes export-ignore

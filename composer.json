@@ -1,0 +1,52 @@
+{
+    "name": "milo/sdk",
+    "description": "PHP SDK for the Milo multi-tenant messaging platform — provision config (tenants, tasks, tools) and drive agents at runtime, with an OpenAI-client-style developer experience.",
+    "type": "library",
+    "license": "proprietary",
+    "keywords": ["milo", "messaging", "llm", "agents", "sdk"],
+    "require": {
+        "php": "^8.1",
+        "ext-json": "*",
+        "php-http/discovery": "^1.20",
+        "psr/http-client": "^1.0",
+        "psr/http-factory": "^1.0",
+        "psr/http-message": "^1.1 || ^2.0",
+        "psr/log": "^1.1 || ^2.0 || ^3.0"
+    },
+    "require-dev": {
+        "guzzlehttp/guzzle": "^7.5",
+        "phpunit/phpunit": "^10.5"
+    },
+    "suggest": {
+        "guzzlehttp/guzzle": "A PSR-18 client used by default when present; any PSR-18 client + PSR-17 factories work via discovery or the factory's withHttpClient()."
+    },
+    "bin": ["bin/milo"],
+    "autoload": {
+        "psr-4": {
+            "Milo\\Sdk\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Milo\\Sdk\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Milo\\Sdk\\Laravel\\MiloServiceProvider"
+            ],
+            "aliases": {
+                "Milo": "Milo\\Sdk\\Laravel\\Facades\\Milo"
+            }
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "php-http/discovery": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

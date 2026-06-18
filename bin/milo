@@ -1,0 +1,204 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * milo — provisioning CLI for the Milo control plane.
+ *
+ * Reads the connection + credential from the environment, so you paste a
+ * provisioner (or admin/owner) token once and mint keys / onboard tenants:
+ *
+ *   export MILO_BASE_URL=https://abc123.execute-api.eu-south-1.amazonaws.com/prod
+ *   export MILO_ADMIN_TOKEN=<provisioner token>      # X-Admin-Token
+ *   export MILO_ADMIN_ACTOR=ops@acme.test            # optional audit actor
+ *
+ *   vendor/bin/milo key:create acme web_app --tasks=support --rpm=120
+ *
+ * The provisioner token can be platform-scoped (any tenant) or tenant-scoped
+ * (its own tenant only). A minted bearer key is printed ONCE — store it.
+ */
+
+// Locate the Composer autoloader whether run from the SDK repo (bin/ → ../vendor)
+// or as an installed dependency (vendor/milo/sdk/bin → ../../../autoload.php).
+$autoloads = [
+    __DIR__ . '/../vendor/autoload.php',
+    __DIR__ . '/../../../autoload.php',
+];
+$loaded = false;
+foreach ($autoloads as $a) {
+    if (is_file($a)) { require $a; $loaded = true; break; }
+}
+if (!$loaded) {
+    fwrite(STDERR, "milo: could not find the Composer autoloader — run `composer install`.\n");
+    exit(2);
+}
+
+use Milo\Sdk\Milo;
+use Milo\Sdk\Exception\MiloException;
+
+function fail(string $msg, int $code = 1): never
+{
+    fwrite(STDERR, "milo: {$msg}\n");
+    exit($code);
+}
+
+function envOrFail(string $key): string
+{
+    $v = getenv($key);
+    if ($v === false || $v === '') {
+        fail("missing env {$key}", 2);
+    }
+    return $v;
+}
+
+/** Split argv (minus script + command) into [positionals[], flags{}]. */
+function parseArgs(array $args): array
+{
+    $positionals = [];
+    $flags = [];
+    foreach ($args as $a) {
+        if (str_starts_with($a, '--')) {
+            $eq = strpos($a, '=');
+            if ($eq === false) {
+                $flags[substr($a, 2)] = true;
+            } else {
+                $flags[substr($a, 2, $eq - 2)] = substr($a, $eq + 1);
+            }
+        } else {
+            $positionals[] = $a;
+        }
+    }
+    return [$positionals, $flags];
+}
+
+/** A non-empty int flag, or null. */
+function intFlag(array $flags, string $name): ?int
+{
+    return isset($flags[$name]) && $flags[$name] !== true && $flags[$name] !== ''
+        ? (int) $flags[$name]
+        : null;
+}
+
+function out(string $line = ''): void
+{
+    fwrite(STDOUT, $line . "\n");
+}
+
+const USAGE = <<<TXT
+milo — Milo provisioning CLI
+
+Env: MILO_BASE_URL, MILO_ADMIN_TOKEN (provisioner/admin/owner), MILO_ADMIN_ACTOR?
+
+Commands:
+  tenant:create <tenant> [--display-name=NAME]      Onboard a tenant.
+  tenant:list                                       List tenants.
+  key:create <tenant> <client> [opts]               Create an api-client + mint a key.
+       --tasks=a,b           allowed_task_ids (default: all)
+       --rpm=N               rate_limit_per_minute (0/omit = unlimited)
+       --monthly-messages=N  monthly_message_limit
+       --monthly-tokens=N    monthly_token_limit
+  key:rotate <tenant> <client>                      Issue a fresh key (old stops working).
+  client:list <tenant>                              List a tenant's api-clients.
+  client:disable <tenant> <client>                  Revoke (disable) an api-client.
+  client:enable  <tenant> <client>                  Re-enable an api-client.
+
+A minted key (`milo_sk_…`) is printed ONCE — store it. The token itself is never logged.
+TXT;
+
+$argvRest = array_slice($argv, 1);
+$command = $argvRest[0] ?? 'help';
+if (in_array($command, ['help', '--help', '-h', ''], true)) {
+    out(USAGE);
+    exit(0);
+}
+[$pos, $flags] = parseArgs(array_slice($argvRest, 1));
+
+$milo = Milo::client(
+    baseUrl: envOrFail('MILO_BASE_URL'),
+    adminToken: envOrFail('MILO_ADMIN_TOKEN'),
+    adminActor: getenv('MILO_ADMIN_ACTOR') ?: null,
+);
+
+try {
+    switch ($command) {
+        case 'tenant:create': {
+            $tenant = $pos[0] ?? fail('usage: tenant:create <tenant> [--display-name=NAME]');
+            $attrs = ['tenant_id' => $tenant, 'status' => 'active'];
+            if (isset($flags['display-name']) && $flags['display-name'] !== true) {
+                $attrs['display_name'] = $flags['display-name'];
+            }
+            $t = $milo->tenants()->create($attrs);
+            out("tenant created: " . $t->id());
+            break;
+        }
+
+        case 'tenant:list': {
+            foreach ($milo->tenants()->list() as $t) {
+                out($t->id());
+            }
+            break;
+        }
+
+        case 'key:create': {
+            $tenant = $pos[0] ?? fail('usage: key:create <tenant> <client> [opts]');
+            $client = $pos[1] ?? fail('usage: key:create <tenant> <client> [opts]');
+            $attrs = ['client_id' => $client];
+            if (isset($flags['tasks']) && $flags['tasks'] !== true) {
+                $attrs['allowed_task_ids'] = array_values(array_filter(array_map('trim', explode(',', (string) $flags['tasks']))));
+            }
+            foreach ([['rpm', 'rate_limit_per_minute'], ['monthly-messages', 'monthly_message_limit'], ['monthly-tokens', 'monthly_token_limit']] as [$flag, $attr]) {
+                $n = intFlag($flags, $flag);
+                if ($n !== null) { $attrs[$attr] = $n; }
+            }
+            $res = $milo->apiClients($tenant)->create($attrs);
+            $key = $res->get('bearer_token');
+            if (!$key) {
+                fail('api-client created but no bearer_token returned (warning: ' . ($res->get('bearer_token_warning') ?? 'unknown') . ')');
+            }
+            out("api-client created: {$tenant}/{$client}");
+            out("bearer key (store now — shown once):");
+            out((string) $key);
+            break;
+        }
+
+        case 'key:rotate': {
+            $tenant = $pos[0] ?? fail('usage: key:rotate <tenant> <client>');
+            $client = $pos[1] ?? fail('usage: key:rotate <tenant> <client>');
+            $key = $milo->apiClients($tenant)->rotateBearer($client)->get('bearer_token');
+            out("rotated {$tenant}/{$client} — new key (shown once):");
+            out((string) $key);
+            break;
+        }
+
+        case 'client:list': {
+            $tenant = $pos[0] ?? fail('usage: client:list <tenant>');
+            foreach ($milo->apiClients($tenant)->list() as $c) {
+                $last4 = $c->get('bearer_token_last4');
+                out($c->get('client_id') . ($last4 ? " (key …{$last4})" : " (no key)"));
+            }
+            break;
+        }
+
+        case 'client:disable': {
+            $tenant = $pos[0] ?? fail('usage: client:disable <tenant> <client>');
+            $client = $pos[1] ?? fail('usage: client:disable <tenant> <client>');
+            $milo->apiClients($tenant)->disable($client);
+            out("disabled {$tenant}/{$client}");
+            break;
+        }
+
+        case 'client:enable': {
+            $tenant = $pos[0] ?? fail('usage: client:enable <tenant> <client>');
+            $client = $pos[1] ?? fail('usage: client:enable <tenant> <client>');
+            $milo->apiClients($tenant)->enable($client);
+            out("enabled {$tenant}/{$client}");
+            break;
+        }
+
+        default:
+            fail("unknown command '{$command}'. Run `milo help`.", 2);
+    }
+} catch (MiloException $e) {
+    fail(get_class($e) . ': ' . $e->getMessage());
+}
