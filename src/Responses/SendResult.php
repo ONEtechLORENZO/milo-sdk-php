@@ -78,6 +78,80 @@ final class SendResult extends Response
     }
 
     /**
+     * Drive the full CLIENT-tool loop and return the final {@see ConversationState}.
+     *
+     * Polls the conversation; whenever the model pauses for tools, runs each via
+     * `$executor(string $name, array $input, string $toolCallId): mixed` (return any
+     * JSON-serializable output), submits the results, and repeats until a final
+     * reply — the OpenAI propose→execute→submit pattern, client-side. Tool calls
+     * already handled are tracked by `tool_call_id` so a re-poll of the same round
+     * isn't re-run.
+     *
+     * NB: this runs on the async (debounce + SQS + poll) path, so each round costs a
+     * poll cycle. ponytail: single-turn assumption — it keys "is this turn done?" off
+     * a reply newer than the pre-send baseline; build the sync inbound path for an
+     * interactive command-bar latency profile.
+     */
+    public function runTools(
+        callable $executor,
+        int $maxRounds = 8,
+        int $maxAttempts = 30,
+        float $intervalSeconds = 1.0,
+    ): ConversationState {
+        if ($this->messaging === null || $this->conversationId === null) {
+            throw new \LogicException('runTools() requires a SendResult produced by Messaging::send()');
+        }
+        $conv = $this->conversationId;
+        $floor = substr((string) $this->messaging->conversation($conv)->repliedAt(), 0, 19);
+        $handled = [];
+
+        for ($round = 0; $round < $maxRounds; $round++) {
+            // Poll until a NEW reply, or pending calls we haven't handled, appear.
+            $state = $this->messaging->conversation($conv);
+            for ($i = 0; ; $i++) {
+                $newReply = $state->hasReply() && substr((string) $state->repliedAt(), 0, 19) > $floor;
+                $fresh = $this->unhandled($state->pendingToolCalls(), $handled);
+                if ($newReply || $fresh !== [] || $i + 1 >= $maxAttempts) {
+                    break;
+                }
+                usleep((int) ($intervalSeconds * 1_000_000));
+                $state = $this->messaging->conversation($conv);
+            }
+
+            if ($state->hasReply() && substr((string) $state->repliedAt(), 0, 19) > $floor) {
+                return $state; // final reply — done
+            }
+            $fresh = $this->unhandled($state->pendingToolCalls(), $handled);
+            if ($fresh === []) {
+                return $state; // timed out with nothing new
+            }
+
+            $results = [];
+            foreach ($fresh as $call) {
+                $id = (string) ($call['tool_call_id'] ?? '');
+                $results[$id] = $executor((string) ($call['name'] ?? ''), (array) ($call['input'] ?? []), $id);
+                $handled[] = $id;
+            }
+            $this->messaging->submitToolResults($conv, (string) $state->pendingExternalMessageId(), $results);
+        }
+
+        return $this->messaging->conversation($conv);
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $calls
+     * @param array<int,string> $handled
+     * @return array<int,array<string,mixed>>
+     */
+    private function unhandled(array $calls, array $handled): array
+    {
+        return array_values(array_filter(
+            $calls,
+            static fn (array $c): bool => !in_array((string) ($c['tool_call_id'] ?? ''), $handled, true),
+        ));
+    }
+
+    /**
      * Poll the by-id result endpoint until the reply is no longer pending; returns
      * the terminal {@see MessageResult}, throws on timeout.
      *

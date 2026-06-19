@@ -7,7 +7,6 @@ namespace Milo\Sdk;
 use Milo\Sdk\Resources\ApiClients;
 use Milo\Sdk\Resources\Audit;
 use Milo\Sdk\Resources\Billing;
-use Milo\Sdk\Resources\Catalog;
 use Milo\Sdk\Resources\Channels;
 use Milo\Sdk\Resources\Conversations;
 use Milo\Sdk\Resources\Messaging;
@@ -15,7 +14,6 @@ use Milo\Sdk\Resources\Metrics;
 use Milo\Sdk\Resources\Secrets;
 use Milo\Sdk\Resources\Tasks;
 use Milo\Sdk\Resources\Tenants;
-use Milo\Sdk\Resources\Tools;
 use Milo\Sdk\Resources\Usage;
 use Milo\Sdk\Responses\Item;
 use Milo\Sdk\Transport\Transporter;
@@ -46,16 +44,6 @@ final class Client
     public function tasks(string $tenantId): Tasks
     {
         return new Tasks($this->transporter, $this->config, $tenantId);
-    }
-
-    public function tools(string $tenantId): Tools
-    {
-        return new Tools($this->transporter, $this->config, $tenantId);
-    }
-
-    public function catalog(): Catalog
-    {
-        return new Catalog($this->transporter, $this->config);
     }
 
     public function apiClients(string $tenantId): ApiClients

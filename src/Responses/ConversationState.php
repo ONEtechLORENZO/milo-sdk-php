@@ -12,6 +12,10 @@ final class ConversationState extends Response
     public ?string $taskId = null;
     /** The durable latest assistant reply ({text, replied_at, usage, cost, …}) or null. */
     public ?array $lastReply = null;
+    /** @var array<int,array{tool_call_id:string,name:string,input:array<string,mixed>}> */
+    public array $pendingToolCalls = [];
+    /** The grouped external_message_id to echo back when submitting tool results. */
+    public ?string $pendingExternalMessageId = null;
 
     protected function hydrate(): void
     {
@@ -20,6 +24,9 @@ final class ConversationState extends Response
         $this->taskId = $this->attributes['task_id'] ?? null;
         $lr = $this->attributes['last_reply'] ?? null;
         $this->lastReply = is_array($lr) ? $lr : null;
+        $calls = $this->attributes['pending_tool_calls'] ?? [];
+        $this->pendingToolCalls = is_array($calls) ? array_values(array_filter($calls, 'is_array')) : [];
+        $this->pendingExternalMessageId = $this->attributes['pending_external_message_id'] ?? null;
     }
 
     /** `closed` is terminal — a message for it opens a new conversation. */
@@ -52,5 +59,27 @@ final class ConversationState extends Response
     public function hasReply(): bool
     {
         return ($this->lastReply['text'] ?? '') !== '';
+    }
+
+    /**
+     * Client tool calls the model is waiting on, each `{tool_call_id, name, input}`.
+     *
+     * @return array<int,array{tool_call_id:string,name:string,input:array<string,mixed>}>
+     */
+    public function pendingToolCalls(): array
+    {
+        return $this->pendingToolCalls;
+    }
+
+    /** True when the model is paused awaiting CLIENT-executed tool results. */
+    public function hasPendingToolCalls(): bool
+    {
+        return $this->pendingToolCalls !== [];
+    }
+
+    /** The id to echo back to `submitToolResults()` (the grouped message id). */
+    public function pendingExternalMessageId(): ?string
+    {
+        return $this->pendingExternalMessageId;
     }
 }

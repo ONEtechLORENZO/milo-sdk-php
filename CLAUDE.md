@@ -25,14 +25,18 @@ The source of truth is **`ONEtechLORENZO/milo-poc` at `sdk/php/`**. The standalo
 An OpenAI-client-style PHP SDK that drives the Milo messaging platform's **two
 planes** through one client (`Milo\Sdk\Client`):
 
-- **Control plane** (admin, `X-Admin-Token`): provision tenants/tasks/tools/
+- **Control plane** (admin, `X-Admin-Token`): provision tenants/tasks/
   api-clients/channels/secrets, read usage/billing/audit/conversations. Accessors:
-  `tenants()`, `tasks($t)`, `tools($t)`, `apiClients($t)`, `channels($t)`,
+  `tenants()`, `tasks($t)`, `apiClients($t)`, `channels($t)`,
   `secrets($t)`, `usage($t)`, `billing($t)`, `audit($t)`, `conversations($t)`,
-  `catalog()`, `metrics()`.
+  `metrics()`. **Tools are CLIENT-executed** — declared inline on the task
+  (`TaskBuilder::withClientTool()` / `clientTools()`), not as separate tenant/
+  catalog items, so there is **no `tools()` / `catalog()` accessor**.
 - **Data plane** (runtime, `Authorization: Bearer milo_sk_…`): `messaging($tenant,
   $clientId, $apiKey, $defaultTaskId)` → `send`, `result`, `conversation`,
-  `messages`, `close`, `export`, `acknowledgeExport`.
+  `messages`, `submitToolResults`, `close`, `export`, `acknowledgeExport`.
+  Client-tool loop: `send(...)->runTools($executor)` (or poll
+  `conversation()->pendingToolCalls()` + `submitToolResults()` yourself).
 
 Both planes hit **one base URL** (the API Gateway invoke URL incl. the stage);
 `Config` appends `/admin/…` or `/v1/…`. One auth header per plane (`X-Admin-Token`
@@ -48,7 +52,8 @@ default). It is an edge-quota credential, NOT auth.
   `Config.php` build it.
 - `src/Resources/` — one class per area (admin + `Messaging` for the data plane);
   `Resource.php` is the base with `adminGet/adminPost/…`.
-- `src/Builder/` — fluent config builders (`TaskBuilder`, `ToolBuilder`).
+- `src/Builder/` — fluent config builder (`TaskBuilder`; tools are declared on the
+  task via `withClientTool()`/`clientTools()`).
 - `src/Responses/` — typed response objects over a generic `Response` base
   (magic property + array access + `toArray()`); `Item` is the untyped fallback.
 - `src/Transport/` — `Transporter` (PSR-18 via discovery), `Response`,

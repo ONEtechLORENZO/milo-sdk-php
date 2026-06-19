@@ -125,20 +125,17 @@ $milo->tenants()->create([
 // update variables later (optimistic-locking aware)
 $milo->tenants()->setVariables('acme', ['brand' => 'Acme Corp']);
 
-// 2) A tool (self-contained HTTP tool)
-$milo->tools('acme')->builder('order_lookup')
-    ->http('GET', 'https://api.acme.test/orders/{{order_id}}')
-    ->capability('read')->sideEffect('none')
-    ->inputSchema(['type' => 'object', 'properties' => ['order_id' => ['type' => 'string']]])
-    ->enable()
-    ->create();
-
-// 3) A task that uses the tool, published as v1
+// 2) A task with a CLIENT-executed tool (a name + description + JSON schema),
+//    published as v1. Milo proposes the call; YOUR code runs it (see runTools below).
 $milo->tasks('acme')->builder('support')
     ->displayName('Support agent')
     ->inlinePrompt('You are {{brand}} support. Be concise and friendly.')
     ->model('eu.amazon.nova-micro-v1:0')
-    ->withTool('order_lookup')          // tool-enabled => inline/direct model
+    ->withClientTool('order_lookup', 'Look up an order by id', [
+        'type' => 'object',
+        'properties' => ['order_id' => ['type' => 'string']],
+        'required' => ['order_id'],
+    ])                                  // tool-enabled => inline/direct model
     ->history(true, 20)
     ->enable()
     ->publish();
@@ -234,6 +231,48 @@ echo $result->reply->text;               // typed response object
 
 $chat->close($send->conversationId, reason: 'resolved', taskId: 'support');
 ```
+
+### Client-executed tools
+
+Tools run in **your** process (the OpenAI pattern): Milo's model proposes a call,
+your code executes it, and the result is posted back to continue the turn. A tool
+is declared on the task as a name + description + JSON schema
+(`->withClientTool(...)`, above) — Milo holds no tool code, secrets, or egress.
+
+`runTools()` drives the whole propose→execute→submit loop for you:
+
+```php
+$send = $chat->send('What is the weather in NYC?', [
+    'task_id' => 'support', 'external_sender_id' => 'user-42',
+]);
+
+$state = $send->runTools(function (string $name, array $input, string $id) {
+    return match ($name) {
+        'get_weather' => $myWeatherService->lookup($input['city']), // YOUR code
+        default       => ['error' => "unknown tool {$name}"],
+    };
+});
+
+echo $state->replyText();   // final assistant reply, after the tool round(s)
+```
+
+To drive the loop yourself (e.g. a human-confirm step before a write): poll the
+conversation, run the calls in `$state->pendingToolCalls()`, and submit:
+
+```php
+$state = $chat->conversation($conversationId);
+if ($state->hasPendingToolCalls()) {
+    $results = [];
+    foreach ($state->pendingToolCalls() as $call) {
+        $results[$call['tool_call_id']] = runMyTool($call['name'], $call['input']);
+    }
+    $chat->submitToolResults($conversationId, $state->pendingExternalMessageId(), $results);
+}
+```
+
+> Tool calls run on the async pipeline, so each round is a poll cycle — fine for a
+> backend that enriches via its own data; a low-latency interactive turn needs the
+> synchronous inbound path (roadmap).
 
 ### Conversation export + purge (Milo is not the archive)
 

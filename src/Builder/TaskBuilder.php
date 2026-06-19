@@ -16,7 +16,9 @@ use Milo\Sdk\Responses\Item;
  *       ->displayName('Support agent')
  *       ->inlinePrompt('You are {{brand}} support. Be concise.')
  *       ->model('eu.amazon.nova-micro-v1:0')
- *       ->withTool('order_lookup')      // tool-enabled => inline/direct model (enforced server-side)
+ *       ->withClientTool('order_lookup', 'Look up an order', [
+ *           'type' => 'object', 'properties' => ['order_id' => ['type' => 'string']],
+ *       ])                               // client-executed; tool-enabled => inline/direct model
  *       ->enable()
  *       ->publish();
  */
@@ -106,28 +108,41 @@ final class TaskBuilder
         return $this;
     }
 
-    /** Add one tool to the allowlist (creates/extends the tools block). */
-    public function withTool(string $toolId): self
+    /**
+     * Declare one CLIENT-executed tool (creates/extends the tools block). Tools
+     * run in the CALLER's process: the model proposes a call, your code runs it and
+     * submits the result back (see {@see \Milo\Sdk\Responses\SendResult::runTools()}).
+     * A tool is just a name + description + JSON input schema — no url/secret/type.
+     *
+     * @param array<string,mixed> $inputSchema JSON Schema for the tool's arguments
+     */
+    public function withClientTool(string $name, string $description, array $inputSchema = []): self
     {
-        $tools = $this->config['tools'] ?? ['enabled' => true, 'enabled_tool_ids' => []];
+        $tools = $this->config['tools'] ?? ['enabled' => true, 'tools' => []];
         $tools['enabled'] = true;
-        $tools['enabled_tool_ids'] = array_values(array_unique([...($tools['enabled_tool_ids'] ?? []), $toolId]));
+        $tools['tools'] = [
+            ...($tools['tools'] ?? []),
+            array_filter([
+                'name' => $name,
+                'description' => $description,
+                'input_schema' => $inputSchema !== [] ? $inputSchema : null,
+            ], static fn ($v) => $v !== null),
+        ];
         $this->config['tools'] = $tools;
 
         return $this;
     }
 
     /**
-     * Configure the tools block wholesale.
+     * Configure the client-tools block wholesale.
      *
-     * @param array<int,string> $toolIds
+     * @param array<int,array{name:string,description?:string,input_schema?:array<string,mixed>}> $tools
      */
-    public function tools(array $toolIds, string $executionPolicy = 'read_only_auto', ?int $maxCallsPerTurn = null): self
+    public function clientTools(array $tools, ?int $maxCallsPerTurn = null): self
     {
         $this->config['tools'] = array_filter([
-            'enabled' => $toolIds !== [],
-            'enabled_tool_ids' => array_values($toolIds),
-            'execution_policy' => $executionPolicy,
+            'enabled' => $tools !== [],
+            'tools' => array_values($tools),
             'max_tool_calls_per_turn' => $maxCallsPerTurn,
         ], static fn ($v) => $v !== null);
 

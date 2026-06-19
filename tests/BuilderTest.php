@@ -23,9 +23,8 @@ final class BuilderTest extends TestCase
             ->inlinePrompt('You are {{brand}} support.')
             ->model('eu.amazon.nova-micro-v1:0', temperature: 0.2)
             ->history(true, 20)
-            ->withTool('order_lookup')
-            ->withTool('order_lookup') // de-duped
-            ->withTool('refund')
+            ->withClientTool('order_lookup', 'Look up an order', ['type' => 'object'])
+            ->withClientTool('refund', 'Issue a refund')
             ->toArray();
 
         self::assertSame('support', $config['task_id']);
@@ -34,8 +33,28 @@ final class BuilderTest extends TestCase
         self::assertSame('eu.amazon.nova-micro-v1:0', $config['model']['model_id']);
         self::assertSame(0.2, $config['model']['temperature']);
         self::assertTrue($config['tools']['enabled']);
-        self::assertSame(['order_lookup', 'refund'], $config['tools']['enabled_tool_ids']);
+        self::assertSame(['order_lookup', 'refund'], array_column($config['tools']['tools'], 'name'));
+        self::assertSame(['type' => 'object'], $config['tools']['tools'][0]['input_schema']);
+        self::assertArrayNotHasKey('input_schema', $config['tools']['tools'][1]); // omitted when empty
         self::assertSame(20, $config['memory_access']['max_history_messages']);
+    }
+
+    public function testClientToolsWholesale(): void
+    {
+        $config = $this->client(new RecordingClient())
+            ->tasks('acme')->builder('support')
+            ->clientTools([
+                ['name' => 'order_lookup', 'description' => 'Look up an order',
+                 'input_schema' => ['type' => 'object']],
+            ], maxCallsPerTurn: 4)
+            ->toArray();
+
+        self::assertTrue($config['tools']['enabled']);
+        self::assertSame('order_lookup', $config['tools']['tools'][0]['name']);
+        self::assertSame(4, $config['tools']['max_tool_calls_per_turn']);
+        // No server-tool fields leak in — tools are client-executed.
+        self::assertArrayNotHasKey('enabled_tool_ids', $config['tools']);
+        self::assertArrayNotHasKey('execution_policy', $config['tools']);
     }
 
     public function testTaskBuilderConversationExportShape(): void
@@ -65,35 +84,4 @@ final class BuilderTest extends TestCase
         self::assertStringEndsWith('/tasks/support/publish', (string) $rec->requests[1]->getUri());
     }
 
-    public function testToolBuilderHttpShape(): void
-    {
-        $config = $this->client(new RecordingClient())
-            ->tools('acme')->builder('order_lookup')
-            ->http('GET', 'https://api.acme.test/orders/{{order_id}}')
-            ->capability('read')->sideEffect('none')
-            ->inputSchema(['type' => 'object', 'properties' => ['order_id' => ['type' => 'string']]])
-            ->enable()
-            ->toArray();
-
-        self::assertSame('http', $config['tool_type']);
-        self::assertSame('GET', $config['spec']['method']);
-        self::assertSame('https://api.acme.test/orders/{{order_id}}', $config['spec']['url']);
-        self::assertSame('read', $config['capability']);
-        self::assertSame('none', $config['side_effect_level']);
-        self::assertTrue($config['enabled']);
-    }
-
-    public function testCatalogBindingForbidsSecurityFieldsByConstruction(): void
-    {
-        // bindCatalog only ever sends binding-safe fields; the catalog owns the rest.
-        $rec = (new RecordingClient())->queueJson(201, ['tool' => ['tool_id' => 'shop_search']]);
-        $this->client($rec)->tools('acme')->bindCatalog('shop_search', 'mcp_shop_search', ['shop_domain' => 'acme.myshopify.com'], 'ssm:/milo/dev/acme/tools/shop');
-
-        $body = $rec->lastJsonBody();
-        self::assertSame('mcp_shop_search', $body['catalog_tool_id']);
-        self::assertSame('acme.myshopify.com', $body['variables']['shop_domain']);
-        self::assertArrayNotHasKey('tool_type', $body);
-        self::assertArrayNotHasKey('input_schema', $body);
-        self::assertArrayNotHasKey('side_effect_level', $body);
-    }
 }

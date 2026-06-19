@@ -175,6 +175,28 @@ final class Messaging extends Resource
     }
 
     /**
+     * Submit CLIENT-executed tool results to resume a paused turn
+     * (`POST /v1/conversations/{id}/tool-results`). `$externalMessageId` is the
+     * `pending_external_message_id` from the conversation state (the grouped id the
+     * parked turn is keyed by — debounce means it differs from the send id);
+     * `$toolResults` maps each `tool_call_id` to your tool's output. Returns the
+     * 202 body; the reply (or the next tool round) is read by polling the
+     * conversation. {@see SendResult::runTools()} drives the whole loop for you.
+     *
+     * @param array<string,mixed> $toolResults
+     * @return array<string,mixed>
+     */
+    public function submitToolResults(string $conversationId, string $externalMessageId, array $toolResults): array
+    {
+        $path = '/v1/conversations/' . rawurlencode($conversationId) . '/tool-results';
+
+        return $this->signedWrite($path, [
+            'external_message_id' => $externalMessageId,
+            'tool_results' => $toolResults,
+        ])->data;
+    }
+
+    /**
      * Close a conversation (terminal). Idempotent; a reopen attempt is `410`.
      *
      * The deployed route is `POST /v1/conversations/close` with

@@ -9,7 +9,6 @@ use Milo\Sdk\Client;
 use Milo\Sdk\Resources\ApiClients;
 use Milo\Sdk\Resources\Audit;
 use Milo\Sdk\Resources\Billing;
-use Milo\Sdk\Resources\Catalog;
 use Milo\Sdk\Resources\Channels;
 use Milo\Sdk\Resources\Conversations;
 use Milo\Sdk\Resources\Messaging;
@@ -17,7 +16,6 @@ use Milo\Sdk\Resources\Metrics;
 use Milo\Sdk\Resources\Secrets;
 use Milo\Sdk\Resources\Tasks;
 use Milo\Sdk\Resources\Tenants;
-use Milo\Sdk\Resources\Tools;
 use Milo\Sdk\Resources\Usage;
 
 /**
@@ -28,8 +26,6 @@ use Milo\Sdk\Resources\Usage;
  *
  * @method static Tenants tenants()
  * @method static Tasks tasks(string $tenantId)
- * @method static Tools tools(string $tenantId)
- * @method static Catalog catalog()
  * @method static ApiClients apiClients(string $tenantId)
  * @method static Channels channels(string $tenantId)
  * @method static Secrets secrets(string $tenantId)

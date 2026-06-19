@@ -86,6 +86,38 @@ final class ClientTest extends TestCase
         self::assertSame('conv_1', $result->conversationId);
     }
 
+    public function testRunToolsDrivesTheClientToolLoop(): void
+    {
+        $rec = (new RecordingClient())
+            ->queueJson(202, ['status' => 'accepted', 'conversation_id' => 'conv_1', 'external_message_id' => 'ext_1'])
+            ->queueJson(200, ['conversation_id' => 'conv_1', 'status' => 'open', 'last_reply' => null]) // baseline
+            ->queueJson(200, ['conversation_id' => 'conv_1', 'status' => 'open', 'last_reply' => null,
+                'pending_tool_calls' => [['tool_call_id' => 'tu_1', 'name' => 'get_weather', 'input' => ['city' => 'NYC']]],
+                'pending_external_message_id' => 'grp_1']) // paused on a tool call
+            ->queueJson(202, ['status' => 'accepted']) // submit tool results
+            ->queueJson(200, ['conversation_id' => 'conv_1', 'status' => 'open',
+                'last_reply' => ['text' => "It's sunny.", 'replied_at' => '2026-06-19T10:00:00Z']]); // final reply
+
+        $calls = [];
+        $send = $this->client($rec)->messaging('acme', 'web_app')->send('weather?', [
+            'task_id' => 'support', 'external_sender_id' => 'u1',
+        ]);
+        $state = $send->runTools(function (string $name, array $input, string $id) use (&$calls) {
+            $calls[] = [$name, $input, $id];
+
+            return ['temp' => 72];
+        }, maxRounds: 3, maxAttempts: 3, intervalSeconds: 0.0);
+
+        self::assertSame([['get_weather', ['city' => 'NYC'], 'tu_1']], $calls);
+        self::assertSame("It's sunny.", $state->replyText());
+        // The submit hit the tool-results endpoint with the GROUPED id + the outputs.
+        $submit = $rec->requests[3];
+        self::assertSame('https://api.test/prod/v1/conversations/conv_1/tool-results', (string) $submit->getUri());
+        $body = json_decode((string) $submit->getBody(), true);
+        self::assertSame('grp_1', $body['external_message_id']);
+        self::assertSame(['tu_1' => ['temp' => 72]], $body['tool_results']);
+    }
+
     public function testApiGatewayKeyIsSentAsXApiKeyWhenConfigured(): void
     {
         // staging/prod run api_require_api_key=true, so the SDK must send the
