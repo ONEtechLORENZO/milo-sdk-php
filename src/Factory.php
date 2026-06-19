@@ -32,6 +32,7 @@ final class Factory
     private array $apiClients = [];
     private float $timeout = 30.0;
     private int $maxRetries = 3;
+    private ?string $apiGatewayKey = null;
     private ?ClientInterface $httpClient = null;
     private ?RequestFactoryInterface $requestFactory = null;
     private ?StreamFactoryInterface $streamFactory = null;
@@ -65,6 +66,19 @@ final class Factory
     public function withApiClient(string $clientId, string $apiKey): self
     {
         $this->apiClients[$clientId] = $apiKey;
+
+        return $this;
+    }
+
+    /**
+     * The API Gateway usage-plan key (sent as `x-api-key`). Required against
+     * staging/prod, which deploy with `api_require_api_key=true` — without it the
+     * gateway rejects `/v1` writes with `403 Forbidden`. It is an edge quota
+     * credential, NOT auth (the bearer key is the auth boundary).
+     */
+    public function withApiGatewayKey(string $key): self
+    {
+        $this->apiGatewayKey = $key;
 
         return $this;
     }
@@ -124,6 +138,7 @@ final class Factory
             apiClients: $this->apiClients,
             timeout: $this->timeout,
             maxRetries: $this->maxRetries,
+            apiGatewayKey: $this->apiGatewayKey,
         );
 
         $transporter = new Transporter(

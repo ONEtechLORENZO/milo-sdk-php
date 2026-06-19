@@ -37,6 +37,9 @@ final class MiloServiceProvider extends ServiceProvider implements DeferrablePro
             if (isset($config['max_retries'])) {
                 $factory->withMaxRetries((int) $config['max_retries']);
             }
+            if (!empty($config['api_gateway_key'])) {
+                $factory->withApiGatewayKey((string) $config['api_gateway_key']);
+            }
             foreach ((array) ($config['api_clients'] ?? []) as $clientId => $secret) {
                 if (is_string($secret) && $secret !== '') {
                     $factory->withApiClient((string) $clientId, $secret);

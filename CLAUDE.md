@@ -35,8 +35,12 @@ planes** through one client (`Milo\Sdk\Client`):
   `messages`, `close`, `export`, `acknowledgeExport`.
 
 Both planes hit **one base URL** (the API Gateway invoke URL incl. the stage);
-`Config` appends `/admin/…` or `/v1/…`. Single header per plane — no request
-signing.
+`Config` appends `/admin/…` or `/v1/…`. One auth header per plane (`X-Admin-Token`
+/ `Authorization: Bearer`) — no request signing. On staging/prod
+(`api_require_api_key=true`) `/v1` **writes** also need the API Gateway usage-plan
+key: set it via `withApiGatewayKey()` / `MILO_API_GATEWAY_KEY` and the `Transporter`
+adds it as `x-api-key` to every request (edge quota credential, NOT auth — without
+it a write 403s at the gateway before the Lambda).
 
 ## Layout
 

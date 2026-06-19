@@ -118,6 +118,14 @@ final class Transporter
             ->withHeader('Accept', 'application/json')
             ->withHeader('X-Request-Id', self::requestId());
 
+        // Edge quota credential (API Gateway usage-plan key), cross-cutting like
+        // X-Request-Id — added to every request when configured. NOT auth; the
+        // gateway ignores it on ungated routes, but staging/prod require it on the
+        // /v1 writes (api_require_api_key=true) or they 403 before the Lambda.
+        if ($this->config->apiGatewayKey !== null && $this->config->apiGatewayKey !== '') {
+            $request = $request->withHeader('x-api-key', $this->config->apiGatewayKey);
+        }
+
         if ($body !== null) {
             $request = $request
                 ->withHeader('Content-Type', 'application/json')

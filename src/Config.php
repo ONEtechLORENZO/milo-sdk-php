@@ -11,6 +11,12 @@ namespace Milo\Sdk;
  * (e.g. `https://abc123.execute-api.eu-south-1.amazonaws.com/prod`). The SDK
  * appends `/admin/...` for the control plane and `/v1/...` for the data plane.
  * Data-plane requests carry an `Authorization: Bearer milo_sk_…` key.
+ *
+ * `apiGatewayKey` is the API Gateway usage-plan key (sent as `x-api-key`). It is
+ * an EDGE quota credential, NOT auth — but staging/prod deploy with
+ * `api_require_api_key=true`, so writes are rejected with `403 Forbidden` at the
+ * gateway without it. When set, it is added to every request (the gateway ignores
+ * it on ungated routes).
  */
 final class Config
 {
@@ -25,6 +31,7 @@ final class Config
         public readonly float $timeout = 30.0,
         public readonly int $maxRetries = 3,
         public readonly float $retryBaseDelay = 0.5,
+        public readonly ?string $apiGatewayKey = null,
     ) {
     }
 

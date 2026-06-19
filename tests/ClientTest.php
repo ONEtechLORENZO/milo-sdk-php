@@ -71,6 +71,8 @@ final class ClientTest extends TestCase
         self::assertSame('Bearer milo_sk_K3yId-s3cret', $req->getHeaderLine('Authorization'));
         // No legacy signing headers.
         self::assertSame('', $req->getHeaderLine('X-Milo-Signature'));
+        // No edge api-key unless configured (this client has none).
+        self::assertSame('', $req->getHeaderLine('x-api-key'));
 
         $body = $rec->lastJsonBody();
         self::assertSame('acme', $body['tenant_id']);
@@ -82,6 +84,26 @@ final class ClientTest extends TestCase
         self::assertInstanceOf(SendResult::class, $result);
         self::assertFalse($result->isDuplicate());
         self::assertSame('conv_1', $result->conversationId);
+    }
+
+    public function testApiGatewayKeyIsSentAsXApiKeyWhenConfigured(): void
+    {
+        // staging/prod run api_require_api_key=true, so the SDK must send the
+        // gateway usage-plan key as x-api-key (alongside the bearer) or the
+        // gateway 403s the write before the Lambda.
+        $rec = (new RecordingClient())->queueJson(202, ['status' => 'accepted', 'conversation_id' => 'conv_1']);
+        $client = (new Factory())
+            ->withBaseUrl('https://api.test/prod')
+            ->withApiClient('web_app', 'milo_sk_K3yId-s3cret')
+            ->withApiGatewayKey('edge-key-abc')
+            ->withHttpClient($rec)
+            ->make();
+
+        $client->messaging('acme', 'web_app')->send('hi', ['task_id' => 'support', 'external_sender_id' => 'u1']);
+
+        $req = $rec->lastRequest();
+        self::assertSame('edge-key-abc', $req->getHeaderLine('x-api-key'));
+        self::assertSame('Bearer milo_sk_K3yId-s3cret', $req->getHeaderLine('Authorization'));
     }
 
     public function testSendPollRetrievesCompletedResult(): void
