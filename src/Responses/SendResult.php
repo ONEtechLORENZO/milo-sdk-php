@@ -54,8 +54,36 @@ final class SendResult extends Response
     }
 
     /**
-     * Convenience: poll the result endpoint until the reply is no longer pending.
-     * Returns the terminal {@see MessageResult}. Throws on timeout.
+     * Await the assistant reply by polling the CONVERSATION — the reliable path,
+     * since Milo debounce-groups inbound messages and the by-id result endpoint
+     * (used by {@see poll()}) can't see a grouped reply. Reads the current reply
+     * timestamp as a baseline first so it returns THIS turn's reply, not a prior
+     * one (server timestamps only — no client clock). Returns a
+     * {@see ConversationState}; check `->hasReply()` / `->replyText()`.
+     */
+    public function waitForReply(int $maxAttempts = 30, float $intervalSeconds = 1.0): ConversationState
+    {
+        if ($this->messaging === null || $this->conversationId === null) {
+            throw new \LogicException('waitForReply() requires a SendResult produced by Messaging::send()');
+        }
+        $baseline = $this->messaging->conversation($this->conversationId)->repliedAt();
+
+        return $this->messaging->pollConversation(
+            $this->conversationId,
+            $baseline,
+            $maxAttempts,
+            $intervalSeconds,
+            $intervalSeconds, // skip the debounce window before the first check
+        );
+    }
+
+    /**
+     * Poll the by-id result endpoint until the reply is no longer pending; returns
+     * the terminal {@see MessageResult}, throws on timeout.
+     *
+     * NB: this resolves the reply by `external_message_id`, which does NOT work for
+     * debounce-grouped messages (the reply is keyed by the grouped id). For the
+     * common case prefer {@see waitForReply()}, which polls the conversation.
      *
      * The reply can't exist until the inbound debounce window has elapsed and the
      * processor has run, so the first poll right after the 202 is always pending.

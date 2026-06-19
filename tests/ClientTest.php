@@ -106,6 +106,43 @@ final class ClientTest extends TestCase
         self::assertSame('Bearer milo_sk_K3yId-s3cret', $req->getHeaderLine('Authorization'));
     }
 
+    public function testWaitForReplyPollsTheConversationNotTheResultEndpoint(): void
+    {
+        $rec = (new RecordingClient())
+            ->queueJson(202, ['status' => 'accepted', 'conversation_id' => 'conv_1', 'external_message_id' => 'ext_1'])
+            ->queueJson(200, ['conversation_id' => 'conv_1', 'status' => 'open']) // baseline: no reply yet
+            ->queueJson(200, ['conversation_id' => 'conv_1', 'status' => 'open',
+                'last_reply' => ['text' => 'Hi there!', 'replied_at' => '2026-06-19T10:00:05Z', 'usage' => ['totalTokens' => 12]]]);
+
+        $send = $this->client($rec)->messaging('acme', 'web_app')->send('hello', [
+            'task_id' => 'support', 'external_sender_id' => 'u1',
+        ]);
+        $state = $send->waitForReply(maxAttempts: 5, intervalSeconds: 0.0);
+
+        self::assertTrue($state->hasReply());
+        self::assertSame('Hi there!', $state->replyText());
+        self::assertSame('2026-06-19T10:00:05Z', $state->repliedAt());
+        self::assertSame(12, $state->lastReply()['usage']['totalTokens']);
+        // It polled the conversation, NOT the by-id result endpoint (which can't see
+        // a debounce-grouped reply).
+        self::assertStringContainsString('/v1/conversations/conv_1', (string) $rec->lastRequest()->getUri());
+        self::assertStringNotContainsString('/result', (string) $rec->lastRequest()->getUri());
+    }
+
+    public function testPollConversationWaitsForAReplyNewerThanBaseline(): void
+    {
+        $rec = (new RecordingClient())
+            ->queueJson(200, ['conversation_id' => 'c', 'status' => 'open',
+                'last_reply' => ['text' => 'old', 'replied_at' => '2026-06-19T10:00:00Z']])
+            ->queueJson(200, ['conversation_id' => 'c', 'status' => 'open',
+                'last_reply' => ['text' => 'new', 'replied_at' => '2026-06-19T10:00:30Z']]);
+
+        $state = $this->client($rec)->messaging('acme', 'web_app')
+            ->pollConversation('c', '2026-06-19T10:00:10Z', maxAttempts: 5, intervalSeconds: 0.0);
+
+        self::assertSame('new', $state->replyText()); // skipped the older reply
+    }
+
     public function testSendPollRetrievesCompletedResult(): void
     {
         $rec = (new RecordingClient())

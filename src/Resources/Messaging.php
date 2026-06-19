@@ -134,6 +134,47 @@ final class Messaging extends Resource
     }
 
     /**
+     * Poll the CONVERSATION for an assistant reply and return its
+     * {@see ConversationState}. Use this (not {@see SendResult::poll()} /
+     * {@see result()}) to await a reply: Milo debounce-groups inbound messages, so
+     * the reply is keyed by a grouped id and the by-`external_message_id` result
+     * endpoint won't find it — but `conversation_state.last_reply` always has it.
+     *
+     * Returns as soon as a non-empty reply is present and (when `$newerThanIso` is
+     * given) its `replied_at` is later than that timestamp — pass the previous
+     * turn's `replied_at` (a server timestamp) to wait for the NEXT reply without
+     * any client-clock dependency. On timeout it returns the last observed state;
+     * the caller checks {@see ConversationState::hasReply()}.
+     */
+    public function pollConversation(
+        string $conversationId,
+        ?string $newerThanIso = null,
+        int $maxAttempts = 30,
+        float $intervalSeconds = 1.0,
+        float $initialDelaySeconds = 0.0,
+    ): ConversationState {
+        if ($initialDelaySeconds > 0) {
+            usleep((int) ($initialDelaySeconds * 1_000_000));
+        }
+        // Compare to second precision so a fractional/`Z` vs no-fraction format
+        // mismatch can't cause a false negative; turns are always >= the debounce
+        // window apart, so the new reply lands in a later second.
+        $floor = $newerThanIso === null ? null : substr($newerThanIso, 0, 19);
+        $state = $this->conversation($conversationId);
+        for ($i = 0; ; $i++) {
+            if ($state->hasReply()
+                && ($floor === null || substr((string) $state->repliedAt(), 0, 19) > $floor)) {
+                return $state;
+            }
+            if ($i + 1 >= $maxAttempts) {
+                return $state;
+            }
+            usleep((int) ($intervalSeconds * 1_000_000));
+            $state = $this->conversation($conversationId);
+        }
+    }
+
+    /**
      * Close a conversation (terminal). Idempotent; a reopen attempt is `410`.
      *
      * The deployed route is `POST /v1/conversations/close` with
