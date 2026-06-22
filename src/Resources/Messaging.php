@@ -50,19 +50,69 @@ final class Messaging extends Resource
      */
     public function send(string $text, array $options = []): SendResult
     {
+        $externalMessageId = $options['external_message_id'] ?? self::uuid();
+        $payload = $this->buildMessagePayload($text, $options, $externalMessageId);
+
+        try {
+            $response = $this->signedWrite('/v1/messages', $payload);
+        } catch (\Milo\Sdk\Exception\MiloException $e) {
+            // Surface the (possibly auto-generated) id so the caller can retry
+            // the same message safely — writes are not auto-retried by the SDK.
+            $e->externalMessageId ??= $externalMessageId;
+            throw $e;
+        }
+
+        return SendResult::from($response->data)->bindPoller($this, $this->tenantId);
+    }
+
+    /**
+     * Submit one message and get the reply (or pending tool calls) on the SAME
+     * call — the SYNCHRONOUS interactive path (`POST /v1/messages` with
+     * `sync:true`). For a command-bar / live chat where the user waits; bypasses
+     * the debounce grouping (which means no message grouping, by design). Returns a
+     * {@see MessageResult} with status `completed` | `tool_calls_pending` | `failed`.
+     * Use {@see runToolsSync()} to drive a client-tool turn end to end.
+     *
+     * @param array{
+     *   task_id?:string, external_sender_id?:string, sender_id?:string,
+     *   external_sender_name?:string, channel?:string, channel_account_id?:string,
+     *   conversation_id?:string, external_message_id?:string, metadata?:array<string,mixed>
+     * } $options
+     */
+    public function sendSync(string $text, array $options = []): MessageResult
+    {
+        $externalMessageId = $options['external_message_id'] ?? self::uuid();
+        $payload = $this->buildMessagePayload($text, $options, $externalMessageId);
+        $payload['sync'] = true;
+
+        try {
+            $response = $this->signedWrite('/v1/messages', $payload);
+        } catch (\Milo\Sdk\Exception\MiloException $e) {
+            $e->externalMessageId ??= $externalMessageId;
+            throw $e;
+        }
+
+        return MessageResult::from($response->data);
+    }
+
+    /**
+     * Build the `POST /v1/messages` body shared by send()/sendSync(). Validates the
+     * required task_id + external sender identity.
+     *
+     * @param array<string,mixed> $options
+     * @return array<string,mixed>
+     */
+    private function buildMessagePayload(string $text, array $options, string $externalMessageId): array
+    {
         $taskId = $options['task_id'] ?? $this->defaultTaskId;
         if ($taskId === null || $taskId === '') {
-            throw new \InvalidArgumentException('Messaging::send() requires a task_id (pass task_id in $options or set a default).');
+            throw new \InvalidArgumentException('Messaging requires a task_id (pass task_id in $options or set a default).');
         }
 
         $senderId = $options['external_sender_id'] ?? $options['sender_id'] ?? null;
         if ($senderId === null || $senderId === '') {
-            throw new \InvalidArgumentException('Messaging::send() requires an external_sender_id (the end-user identity).');
+            throw new \InvalidArgumentException('Messaging requires an external_sender_id (the end-user identity).');
         }
-
-        // Resolved up front so it can be surfaced on a failed send for an
-        // idempotent retry (the server dedupes on external_message_id).
-        $externalMessageId = $options['external_message_id'] ?? self::uuid();
 
         $payload = [
             'tenant_id' => $this->tenantId,
@@ -87,16 +137,7 @@ final class Messaging extends Resource
             $payload['metadata'] = $options['metadata'];
         }
 
-        try {
-            $response = $this->signedWrite('/v1/messages', $payload);
-        } catch (\Milo\Sdk\Exception\MiloException $e) {
-            // Surface the (possibly auto-generated) id so the caller can retry
-            // the same message safely — writes are not auto-retried by the SDK.
-            $e->externalMessageId ??= $externalMessageId;
-            throw $e;
-        }
-
-        return SendResult::from($response->data)->bindPoller($this, $this->tenantId);
+        return $payload;
     }
 
     /** Poll the reply for a submitted message (`GET /v1/messages/{id}/result`). */
@@ -194,6 +235,52 @@ final class Messaging extends Resource
             'external_message_id' => $externalMessageId,
             'tool_results' => $toolResults,
         ])->data;
+    }
+
+    /**
+     * Submit CLIENT-executed tool results and get the next step on the SAME call
+     * (SYNCHRONOUS: `POST /v1/conversations/{id}/tool-results` with `sync:true`).
+     * Returns a {@see MessageResult} — `completed` (the reply) or another
+     * `tool_calls_pending` round. The async {@see submitToolResults()} returns a
+     * 202 and you poll; this returns the resumed turn inline.
+     *
+     * @param array<string,mixed> $toolResults
+     */
+    public function submitToolResultsSync(string $conversationId, string $externalMessageId, array $toolResults): MessageResult
+    {
+        $path = '/v1/conversations/' . rawurlencode($conversationId) . '/tool-results';
+
+        return MessageResult::from($this->signedWrite($path, [
+            'sync' => true,
+            'external_message_id' => $externalMessageId,
+            'tool_results' => $toolResults,
+        ])->data);
+    }
+
+    /**
+     * Drive a full CLIENT-tool turn SYNCHRONOUSLY and return the final
+     * {@see MessageResult}. Starting from a `tool_calls_pending` result (from
+     * {@see sendSync()}), run each call via
+     * `$executor(string $name, array $input, string $toolCallId): mixed` and submit
+     * results, repeating until a final reply — the OpenAI propose→execute→submit
+     * loop, inline (no polling). `$result` is returned unchanged if it isn't
+     * pending. The sync external_message_id IS the parked-turn key (no debounce
+     * grouping), so each round resumes cleanly.
+     */
+    public function runToolsSync(MessageResult $result, callable $executor, int $maxRounds = 8): MessageResult
+    {
+        for ($round = 0; $round < $maxRounds && $result->isToolCallsPending(); $round++) {
+            $conv = (string) $result->conversationId;
+            $extId = (string) $result->externalMessageId;
+            $results = [];
+            foreach ($result->toolCalls() as $call) {
+                $id = (string) ($call['tool_call_id'] ?? '');
+                $results[$id] = $executor((string) ($call['name'] ?? ''), (array) ($call['input'] ?? []), $id);
+            }
+            $result = $this->submitToolResultsSync($conv, $extId, $results);
+        }
+
+        return $result;
     }
 
     /**

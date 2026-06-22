@@ -33,10 +33,12 @@ planes** through one client (`Milo\Sdk\Client`):
   (`TaskBuilder::withClientTool()` / `clientTools()`), not as separate tenant/
   catalog items, so there is **no `tools()` / `catalog()` accessor**.
 - **Data plane** (runtime, `Authorization: Bearer milo_sk_…`): `messaging($tenant,
-  $clientId, $apiKey, $defaultTaskId)` → `send`, `result`, `conversation`,
-  `messages`, `submitToolResults`, `close`, `export`, `acknowledgeExport`.
-  Client-tool loop: `send(...)->runTools($executor)` (or poll
-  `conversation()->pendingToolCalls()` + `submitToolResults()` yourself).
+  $clientId, $apiKey, $defaultTaskId)` → `send`, `sendSync`, `result`,
+  `conversation`, `messages`, `submitToolResults`, `submitToolResultsSync`,
+  `close`, `export`, `acknowledgeExport`. Client-tool loop:
+  `send(...)->runTools($executor)` (async, poll-driven) or
+  `runToolsSync(sendSync(...), $executor)` (interactive, inline — no polling). The
+  `sync` paths post `sync:true` and return a `MessageResult` on the same call.
 
 Both planes hit **one base URL** (the API Gateway invoke URL incl. the stage);
 `Config` appends `/admin/…` or `/v1/…`. One auth header per plane (`X-Admin-Token`

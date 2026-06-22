@@ -118,6 +118,62 @@ final class ClientTest extends TestCase
         self::assertSame(['tu_1' => ['temp' => 72]], $body['tool_results']);
     }
 
+    public function testSendSyncReturnsReplyInline(): void
+    {
+        $rec = (new RecordingClient())->queueJson(200, [
+            'status' => 'completed', 'conversation_id' => 'conv_1', 'external_message_id' => 'm1',
+            'reply' => ['type' => 'text', 'text' => 'Hello, synchronously.'],
+        ]);
+        $result = $this->client($rec)->messaging('acme', 'web_app')->sendSync('hi', [
+            'task_id' => 'support', 'external_sender_id' => 'u1',
+        ]);
+
+        $req = $rec->lastRequest();
+        self::assertSame('https://api.test/prod/v1/messages', (string) $req->getUri());
+        self::assertSame('Bearer milo_sk_K3yId-s3cret', $req->getHeaderLine('Authorization'));
+        self::assertTrue(json_decode((string) $req->getBody(), true)['sync']);
+        self::assertInstanceOf(\Milo\Sdk\Responses\MessageResult::class, $result);
+        self::assertTrue($result->isCompleted());
+        self::assertSame('Hello, synchronously.', $result->text());
+    }
+
+    public function testRunToolsSyncDrivesTheLoopInline(): void
+    {
+        $rec = (new RecordingClient())
+            ->queueJson(200, [ // sendSync -> paused on a tool call
+                'status' => 'tool_calls_pending', 'conversation_id' => 'conv_1', 'external_message_id' => 'm1',
+                'tool_calls' => [['tool_call_id' => 'tu_1', 'name' => 'get_weather', 'input' => ['city' => 'NYC']]],
+                'reply' => ['type' => 'text', 'text' => ''],
+            ])
+            ->queueJson(200, [ // submitToolResultsSync -> final reply
+                'status' => 'completed', 'conversation_id' => 'conv_1', 'external_message_id' => 'm1',
+                'reply' => ['type' => 'text', 'text' => "It's sunny."],
+            ]);
+
+        $chat = $this->client($rec)->messaging('acme', 'web_app');
+        $calls = [];
+        $first = $chat->sendSync('weather?', ['task_id' => 'support', 'external_sender_id' => 'u1']);
+        self::assertTrue($first->isToolCallsPending());
+
+        $final = $chat->runToolsSync($first, function (string $name, array $input, string $id) use (&$calls) {
+            $calls[] = [$name, $input, $id];
+
+            return ['temp' => 72];
+        });
+
+        self::assertSame([['get_weather', ['city' => 'NYC'], 'tu_1']], $calls);
+        self::assertTrue($final->isCompleted());
+        self::assertSame("It's sunny.", $final->text());
+        // The sync submit hit the tool-results endpoint with sync:true + the SAME
+        // external_message_id (sync has no debounce grouping → it IS the parked key).
+        $submit = $rec->requests[1];
+        self::assertSame('https://api.test/prod/v1/conversations/conv_1/tool-results', (string) $submit->getUri());
+        $body = json_decode((string) $submit->getBody(), true);
+        self::assertTrue($body['sync']);
+        self::assertSame('m1', $body['external_message_id']);
+        self::assertSame(['tu_1' => ['temp' => 72]], $body['tool_results']);
+    }
+
     public function testApiGatewayKeyIsSentAsXApiKeyWhenConfigured(): void
     {
         // staging/prod run api_require_api_key=true, so the SDK must send the

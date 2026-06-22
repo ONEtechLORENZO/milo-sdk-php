@@ -270,9 +270,33 @@ if ($state->hasPendingToolCalls()) {
 }
 ```
 
-> Tool calls run on the async pipeline, so each round is a poll cycle — fine for a
-> backend that enriches via its own data; a low-latency interactive turn needs the
-> synchronous inbound path (roadmap).
+### Synchronous (interactive) turns
+
+For a command bar / live chat where the user waits, use the **sync** path: the
+reply (or pending tool calls) comes back on the SAME call — no polling, no debounce
+grouping. `sendSync()` returns a `MessageResult`; `runToolsSync()` drives a full
+client-tool turn inline (the OpenAI propose→execute→submit ergonomics):
+
+```php
+// plain interactive reply
+$result = $chat->sendSync('Summarize my last order', [
+    'task_id' => 'support', 'external_sender_id' => 'user-42',
+]);
+echo $result->text();
+
+// interactive turn that uses client tools, end to end (no polling)
+$first = $chat->sendSync('Where is order #1234?', [
+    'task_id' => 'support', 'external_sender_id' => 'user-42',
+]);
+$final = $chat->runToolsSync($first, fn ($name, $input, $id) =>
+    $myService->run($name, $input));     // YOUR code executes the tool
+echo $final->text();
+```
+
+Sync is best-effort: the reply is also persisted, so on a timeout you can fall back
+to `conversation()` / `result()` polling. Requires the backend deployed with sync
+mode enabled (a `503` means it isn't). Use the async `send()` + poll/`runTools()` for
+customer messaging (debounce grouping); use sync for interactive UIs.
 
 ### Conversation export + purge (Milo is not the archive)
 
