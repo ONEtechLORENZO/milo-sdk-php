@@ -67,10 +67,32 @@ final class MessageResult extends Response
         return $this->toolCalls !== [];
     }
 
-    /** The reply text, or null when still pending / no fallback. */
+    /** The reply text, or null when still pending / no fallback. For a structured
+     * (output_schema) reply this is the JSON serialized as a string; use
+     * {@see json()} for the parsed object. */
     public function text(): ?string
     {
         return $this->reply?->text;
+    }
+
+    /**
+     * The STRUCTURED reply object for a task with an `output_schema` (the model's
+     * reply forced to that JSON Schema), or null for a plain text reply. Parsed —
+     * ready to use, no `json_decode` needed.
+     *
+     * @return array<string,mixed>|null
+     */
+    public function json(): ?array
+    {
+        $json = $this->attributes['reply']['json'] ?? null;
+
+        return is_array($json) ? $json : null;
+    }
+
+    /** True when the reply is structured JSON (the task pins an output_schema). */
+    public function isJson(): bool
+    {
+        return ($this->attributes['reply']['type'] ?? null) === 'json';
     }
 
     /** Token usage `{ inputTokens, outputTokens, totalTokens }` from `debug.usage`. */

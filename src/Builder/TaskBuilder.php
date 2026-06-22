@@ -149,6 +149,22 @@ final class TaskBuilder
         return $this;
     }
 
+    /**
+     * Force the reply to match a JSON Schema — structured output (OpenAI's
+     * `response_format: json_schema`). Every reply for this task is the structured
+     * object ({@see \Milo\Sdk\Responses\MessageResult::json()}). Requires a direct
+     * model (inline prompt + `model()`) and is mutually exclusive with client tools
+     * (both enforced server-side). For a tool-gather-then-format flow, use two tasks.
+     *
+     * @param array<string,mixed> $schema a JSON Schema object
+     */
+    public function outputSchema(array $schema): self
+    {
+        $this->config['output_schema'] = $schema;
+
+        return $this;
+    }
+
     public function callbackSecret(string $secretRef): self
     {
         $secrets = $this->config['secrets'] ?? [];

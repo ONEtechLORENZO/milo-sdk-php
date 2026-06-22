@@ -174,6 +174,27 @@ final class ClientTest extends TestCase
         self::assertSame(['tu_1' => ['temp' => 72]], $body['tool_results']);
     }
 
+    public function testStructuredOutputReplyExposesParsedJson(): void
+    {
+        $rec = (new RecordingClient())->queueJson(200, [
+            'status' => 'completed', 'conversation_id' => 'conv_1', 'external_message_id' => 'm1',
+            'reply' => [
+                'type' => 'json',
+                'json' => ['answer' => 'Sunny', 'score' => 0.9],
+                'text' => '{"answer":"Sunny","score":0.9}',
+            ],
+        ]);
+        $result = $this->client($rec)->messaging('acme', 'web_app')->sendSync('weather?', [
+            'task_id' => 'formatter', 'external_sender_id' => 'u1',
+        ]);
+
+        self::assertTrue($result->isCompleted());
+        self::assertTrue($result->isJson());
+        self::assertSame(['answer' => 'Sunny', 'score' => 0.9], $result->json());
+        // text() still returns the serialization for text-only consumers
+        self::assertSame('{"answer":"Sunny","score":0.9}', $result->text());
+    }
+
     public function testApiGatewayKeyIsSentAsXApiKeyWhenConfigured(): void
     {
         // staging/prod run api_require_api_key=true, so the SDK must send the

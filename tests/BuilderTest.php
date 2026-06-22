@@ -39,6 +39,21 @@ final class BuilderTest extends TestCase
         self::assertSame(20, $config['memory_access']['max_history_messages']);
     }
 
+    public function testOutputSchemaForStructuredOutput(): void
+    {
+        $schema = ['type' => 'object', 'properties' => ['answer' => ['type' => 'string']]];
+        $config = $this->client(new RecordingClient())
+            ->tasks('acme')->builder('formatter')
+            ->inlinePrompt('Answer as JSON.')
+            ->model('eu.amazon.nova-micro-v1:0')
+            ->outputSchema($schema)
+            ->toArray();
+
+        self::assertSame($schema, $config['output_schema']);
+        // structured output stands alone — no tools block forced on
+        self::assertArrayNotHasKey('tools', $config);
+    }
+
     public function testClientToolsWholesale(): void
     {
         $config = $this->client(new RecordingClient())

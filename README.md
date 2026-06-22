@@ -298,6 +298,37 @@ to `conversation()` / `result()` polling. Requires the backend deployed with syn
 mode enabled (a `503` means it isn't). Use the async `send()` + poll/`runTools()` for
 customer messaging (debounce grouping); use sync for interactive UIs.
 
+### Structured output (JSON Schema)
+
+Force a task's replies to a JSON Schema (OpenAI's `response_format: json_schema`).
+Configure it once on the task, then every reply is the parsed object:
+
+```php
+// provision: a task whose reply is always this shape (direct model required;
+// cannot be combined with client tools)
+$milo->tasks('acme')->builder('classifier')
+    ->inlinePrompt('Classify the message. Reply via the schema.')
+    ->model('eu.amazon.nova-micro-v1:0')
+    ->outputSchema([
+        'type' => 'object',
+        'properties' => [
+            'intent'    => ['type' => 'string', 'enum' => ['sales', 'support', 'billing']],
+            'sentiment' => ['type' => 'string'],
+        ],
+        'required' => ['intent'],
+    ])
+    ->publish();
+
+// use: the reply is parsed JSON, ready to use
+$result = $chat->sendSync('I was double charged!', ['task_id' => 'classifier', 'external_sender_id' => 'u1']);
+if ($result->isJson()) {
+    $data = $result->json();          // ['intent' => 'billing', 'sentiment' => '...']
+}
+```
+
+Works on both paths — `sendSync()` returns the structured `MessageResult` inline;
+async `send()` + poll exposes the same `reply.json` on the result/conversation.
+
 ### Conversation export + purge (Milo is not the archive)
 
 Closing seals the conversation, hands the transcript back, then purges Milo's
