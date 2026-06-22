@@ -28,7 +28,7 @@ a Composer `vcs` repository in the consuming project's `composer.json`:
     { "type": "vcs", "url": "https://github.com/ONEtechLORENZO/milo-sdk-php.git" }
   ],
   "require": {
-    "milo/sdk": "^0.1"
+    "milo/sdk": "^1.0"
   }
 }
 ```
@@ -37,8 +37,9 @@ a Composer `vcs` repository in the consuming project's `composer.json`:
 composer update milo/sdk
 ```
 
-- **Versioning:** `^0.1` tracks `0.1.x` releases (tags on `milo-sdk-php`). Use
-  `"dev-main"` to follow the latest unreleased `main` instead of a pinned tag.
+- **Versioning:** `^1.0` tracks `1.x` releases (SemVer tags on `milo-sdk-php`; the
+  stable API since 1.0.0). Use `"dev-main"` to follow the latest unreleased `main`
+  instead of a pinned tag.
 - **Private-repo access:** Composer needs read access to `milo-sdk-php`. Either
   give it a read-only GitHub token —
   `composer config --global --auth github-oauth.github.com <token>` (or an
@@ -65,7 +66,7 @@ Integrate the Milo PHP SDK (composer package `milo/sdk`) into this project.
 It is an INTERNAL package — NOT on Packagist. Install it from its git repo:
 1. Add to composer.json a "vcs" repository
    "https://github.com/ONEtechLORENZO/milo-sdk-php.git" and require
-   "milo/sdk": "^0.1", then run `composer update milo/sdk`. Do NOT look for it on
+   "milo/sdk": "^1.0", then run `composer update milo/sdk`. Do NOT look for it on
    Packagist. If Composer can't access the repo, stop and tell me — it needs
    read access (a read-only GitHub token in auth.json, or a deploy key + the
    git@github.com:ONEtechLORENZO/milo-sdk-php.git SSH URL).

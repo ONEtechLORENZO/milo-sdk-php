@@ -15,8 +15,9 @@ The source of truth is **`ONEtechLORENZO/milo-poc` at `sdk/php/`**. The standalo
 
 - **If you are in `milo-sdk-php`: do NOT commit here.** Your commits are clobbered
   on the next split. Make the change in `milo-poc/sdk/php/`; it mirrors over.
-- Releases are SemVer **tags cut on `milo-sdk-php`** (e.g. `v0.1.0`); versioning is
-  deliberately decoupled from monorepo tags.
+- Releases are SemVer **tags cut on `milo-sdk-php`** (e.g. `v1.0.0`); versioning is
+  deliberately decoupled from monorepo tags. The API is **stable since 1.0.0** —
+  breaking changes require a 2.0.0.
 - Consumers add a Composer `vcs` repository pointing at `milo-sdk-php` and
   `require milo/sdk`.
 
