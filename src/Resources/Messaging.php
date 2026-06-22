@@ -45,7 +45,7 @@ final class Messaging extends Resource
      * @param array{
      *   task_id?:string, external_sender_id?:string, sender_id?:string,
      *   external_sender_name?:string, channel?:string, channel_account_id?:string,
-     *   conversation_id?:string, external_message_id?:string, metadata?:array<string,mixed>
+     *   conversation_id?:string, external_message_id?:string, metadata?:array<string,mixed>, context?:string|array<mixed>
      * } $options
      */
     public function send(string $text, array $options = []): SendResult
@@ -76,7 +76,7 @@ final class Messaging extends Resource
      * @param array{
      *   task_id?:string, external_sender_id?:string, sender_id?:string,
      *   external_sender_name?:string, channel?:string, channel_account_id?:string,
-     *   conversation_id?:string, external_message_id?:string, metadata?:array<string,mixed>
+     *   conversation_id?:string, external_message_id?:string, metadata?:array<string,mixed>, context?:string|array<mixed>
      * } $options
      */
     public function sendSync(string $text, array $options = []): MessageResult
@@ -135,6 +135,14 @@ final class Messaging extends Resource
         }
         if (isset($options['metadata']) && is_array($options['metadata'])) {
             $payload['metadata'] = $options['metadata'];
+        }
+        // Per-request context for THIS turn: fresh material injected into the system
+        // prompt (e.g. live knowledge, or data gathered by a prior step). A string,
+        // or any JSON-serializable value (objects/arrays are serialized server-side).
+        // It is your (the api-client's) trusted content — don't put untrusted
+        // end-user text here; that belongs in $text.
+        if (isset($options['context']) && $options['context'] !== '' && $options['context'] !== null) {
+            $payload['context'] = $options['context'];
         }
 
         return $payload;

@@ -174,6 +174,40 @@ final class ClientTest extends TestCase
         self::assertSame(['tu_1' => ['temp' => 72]], $body['tool_results']);
     }
 
+    public function testPerRequestContextIsSentOnTheBody(): void
+    {
+        $rec = (new RecordingClient())->queueJson(200, [
+            'status' => 'completed', 'conversation_id' => 'conv_1', 'external_message_id' => 'm1',
+            'reply' => ['type' => 'text', 'text' => 'The promo code is ZEBRA-42.'],
+        ]);
+        $this->client($rec)->messaging('acme', 'web_app')->sendSync('What is the promo code?', [
+            'task_id' => 'support', 'external_sender_id' => 'u1',
+            'context' => "Store knowledge: the current promo code is ZEBRA-42.",
+        ]);
+
+        $body = json_decode((string) $rec->lastRequest()->getBody(), true);
+        self::assertSame('Store knowledge: the current promo code is ZEBRA-42.', $body['context']);
+        self::assertTrue($body['sync']);
+    }
+
+    public function testContextAcceptsJsonAndIsOmittedWhenEmpty(): void
+    {
+        $rec = (new RecordingClient())
+            ->queueJson(202, ['status' => 'accepted', 'conversation_id' => 'c', 'external_message_id' => 'm'])
+            ->queueJson(202, ['status' => 'accepted', 'conversation_id' => 'c', 'external_message_id' => 'm']);
+        $chat = $this->client($rec)->messaging('acme', 'web_app');
+
+        // a structured (array) context passes through as-is (server serializes it)
+        $chat->send('hi', ['task_id' => 'support', 'external_sender_id' => 'u1',
+            'context' => ['gathered' => ['orders' => 3]]]);
+        self::assertSame(['gathered' => ['orders' => 3]],
+            json_decode((string) $rec->requests[0]->getBody(), true)['context']);
+
+        // empty context is omitted entirely
+        $chat->send('hi', ['task_id' => 'support', 'external_sender_id' => 'u1', 'context' => '']);
+        self::assertArrayNotHasKey('context', json_decode((string) $rec->requests[1]->getBody(), true));
+    }
+
     public function testStructuredOutputReplyExposesParsedJson(): void
     {
         $rec = (new RecordingClient())->queueJson(200, [

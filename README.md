@@ -329,6 +329,25 @@ if ($result->isJson()) {
 Works on both paths — `sendSync()` returns the structured `MessageResult` inline;
 async `send()` + poll exposes the same `reply.json` on the result/conversation.
 
+### Per-request context
+
+Inject fresh per-turn material into the system prompt (without editing the task) —
+live knowledge/FAQ, or data gathered by a prior step. Pass `context` (a string or
+any JSON value) on `send`/`sendSync`:
+
+```php
+$reply = $chat->sendSync('What is the current promo code?', [
+    'task_id' => 'support', 'external_sender_id' => 'u1',
+    'context' => $knowledgeBase->latestFor('promos'),   // string OR array (JSON)
+]);
+```
+
+It renders at `{{request_context}}` if the task template places it, else is
+appended to the prompt. It's **your** trusted content (it lands in the system
+prompt) — don't put untrusted end-user text here; that goes in the message. Handy
+for a gather→format flow: drive a tool task, then pass its result as the `context`
+of a structured-output task.
+
 ### Conversation export + purge (Milo is not the archive)
 
 Closing seals the conversation, hands the transcript back, then purges Milo's
